@@ -509,17 +509,14 @@ def cmd_live_run(args) -> None:
     _full_reset_from_binance(dry_run=args.dry_run)
 
     now = _now_iso()
-    if not live_get_state("started_at"):
-        live_set_state("started_at", now)
-    _stored = live_get_state("initial_balance")
-    if not _stored or float(_stored) <= 0:
-        usdc     = _live_usdc()
-        holdings = live_get_holdings()
-        prices   = get_prices([h.symbol for h in holdings]) if holdings else {}
-        crypto   = sum(h.quantity * prices.get(h.symbol, 0) for h in holdings)
-        balance  = round(usdc + crypto, 2)
-        if balance > 0:
-            live_set_state("initial_balance", str(balance))
+    live_set_state("started_at", now)
+    usdc     = _live_usdc()
+    holdings = live_get_holdings()
+    prices   = get_prices([h.symbol for h in holdings]) if holdings else {}
+    crypto   = sum(h.quantity * prices.get(h.symbol, 0) for h in holdings)
+    balance  = round(usdc + crypto, 2)
+    if balance > 0:
+        live_set_state("initial_balance", str(balance))
 
     run_combined_cycle(_LIVE_BACKEND, dry_run=args.dry_run, verbose=args.verbose)
 
@@ -539,17 +536,14 @@ def cmd_live_loop(args) -> None:
     _full_reset_from_binance(dry_run=args.dry_run)
 
     now = _now_iso()
-    if not live_get_state("started_at"):
-        live_set_state("started_at", now)
-    _stored = live_get_state("initial_balance")
-    if not _stored or float(_stored) <= 0:
-        usdc     = _live_usdc()
-        holdings = live_get_holdings()
-        prices   = get_prices([h.symbol for h in holdings]) if holdings else {}
-        crypto   = sum(h.quantity * prices.get(h.symbol, 0) for h in holdings)
-        balance  = round(usdc + crypto, 2)
-        if balance > 0:
-            live_set_state("initial_balance", str(balance))
+    live_set_state("started_at", now)
+    usdc     = _live_usdc()
+    holdings = live_get_holdings()
+    prices   = get_prices([h.symbol for h in holdings]) if holdings else {}
+    crypto   = sum(h.quantity * prices.get(h.symbol, 0) for h in holdings)
+    balance  = round(usdc + crypto, 2)
+    if balance > 0:
+        live_set_state("initial_balance", str(balance))
 
     # Capture reference balance at loop launch for per-session P&L display
     _ref_usdc     = _live_usdc()
