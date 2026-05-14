@@ -7,6 +7,7 @@ live-history : recent live transactions and cycle performance
 import math
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 
 from ..binance import (get_account_balances, get_earn_balances, get_lot_size,
                        get_my_trades, get_prices, get_spot_balance, has_api_keys,
@@ -518,6 +519,9 @@ def cmd_live_run(args) -> None:
     balance  = round(usdc + crypto, 2)
     if balance > 0:
         live_set_state("initial_balance", str(balance))
+        _paris_tz = timezone(timedelta(hours=2))
+        live_set_state("day_start_date",    datetime.now(_paris_tz).strftime("%Y-%m-%d"))
+        live_set_state("day_start_balance", str(balance))
 
     run_combined_cycle(_LIVE_BACKEND, dry_run=args.dry_run, verbose=args.verbose)
 
@@ -545,6 +549,9 @@ def cmd_live_loop(args) -> None:
     balance  = round(usdc + crypto, 2)
     if balance > 0:
         live_set_state("initial_balance", str(balance))
+        _paris_tz = timezone(timedelta(hours=2))
+        live_set_state("day_start_date",    datetime.now(_paris_tz).strftime("%Y-%m-%d"))
+        live_set_state("day_start_balance", str(balance))
 
     # Capture reference balance at loop launch for per-session P&L display
     _ref_usdc     = _live_usdc()
