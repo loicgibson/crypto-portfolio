@@ -639,6 +639,17 @@ def collect_watchlist_context(backend: PortfolioBackend) -> dict:
     # Persist updated watchlist
     backend.set_state("watchlist", json.dumps(watchlist))
 
+    # Grok sentiment for actionable candidates + positions
+    if GROK_API_KEY:
+        all_syms = (
+            [c["symbol"] for c in breaking + confirmed]
+            + ([h.symbol for h in holdings] if holdings else [])
+        )
+        if all_syms:
+            sentiment = fetch_sentiment(list(dict.fromkeys(all_syms)))
+            for c in breaking + confirmed:
+                c["sentiment_x"] = sentiment.get(c["symbol"])
+
     # Current positions for exit-signal detection
     positions: list[dict] = []
     if holdings:
