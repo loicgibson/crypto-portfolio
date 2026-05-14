@@ -1,0 +1,45 @@
+# Secrets & config
+.env
+
+# Base de données locale
+*.db
+
+# Modèles ML entraînés
+data/models/
+*.pkl
+
+# Données klines / cache
+data/klines/
+data/cache/
+data/
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environnement virtuel
+.venv/
+venv/
+env/
+
+# Build / packaging
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+.DS_Store
