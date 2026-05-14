@@ -42,14 +42,6 @@ def _live_usdc() -> float:
     return spot + earn
 
 
-def _current_total() -> float:
-    """Current total portfolio value: USDC + crypto holdings at market price."""
-    usdc     = _live_usdc()
-    holdings = live_get_holdings()
-    prices   = get_prices([h.symbol for h in holdings]) if holdings else {}
-    crypto   = sum(h.quantity * prices.get(h.symbol, 0) for h in holdings)
-    return usdc + crypto
-
 
 def _record_live_pnl(pnl_pct: float) -> None:
     import json
@@ -567,11 +559,10 @@ def cmd_live_loop(args) -> None:
     main_interval_secs = args.interval * 60
     sub_interval_secs  = _SUB_INTERVAL_MIN * 60
 
-    stop_str = f" | Stop : [bold red]-{args.stop_loss:.1f}%[/]" if args.stop_loss > 0 else ""
     console.print(
         f"[bold cyan]Live loop[/] — sous-cycle [bold]{_SUB_INTERVAL_MIN} min[/] (watchlist)"
         f" + cycle principal [bold]{args.interval} min[/]. "
-        f"Référence boucle : [bold]{_ref_total:.2f} USDC[/]{stop_str}. Ctrl+C pour arrêter.\n"
+        f"Référence boucle : [bold]{_ref_total:.2f} USDC[/]. Ctrl+C pour arrêter.\n"
     )
 
     main_cycle = 0
@@ -600,16 +591,6 @@ def cmd_live_loop(args) -> None:
                 raise
             except Exception as exc:
                 console.print(f"[red]Erreur sous-cycle {sub_cycle} : {exc}[/]")
-
-        if args.stop_loss > 0 and balance > 0:
-            current = _current_total()
-            pnl_pct = (current / balance - 1) * 100
-            if pnl_pct < -args.stop_loss:
-                console.print(
-                    f"\n[bold red]⛔ Stop journalier atteint : {pnl_pct:+.1f}% "
-                    f"(seuil -{args.stop_loss:.1f}%). Loop arrêtée.[/]"
-                )
-                break
 
         console.print(f"\n[dim]Prochain sous-cycle dans {_SUB_INTERVAL_MIN} min…[/]\n")
         try:
@@ -1002,8 +983,6 @@ def register(sub):
     p = sub.add_parser("live-loop", help="Boucle automatique live (pump Tier 2 toutes les N min)")
     p.add_argument("--interval",  type=int, default=15, metavar="MIN",
                    help="Intervalle pump en minutes (defaut : 15)")
-    p.add_argument("--stop-loss", type=float, default=5.0, metavar="PCT", dest="stop_loss",
-                   help="Arrêter si P&L session < -PCT%% (défaut : 5.0 ; 0 = désactivé)")
     p.add_argument("--verbose",   action="store_true")
     p.add_argument("--dry-run",   action="store_true", dest="dry_run")
     p.add_argument("--yes", "-y", action="store_true",
