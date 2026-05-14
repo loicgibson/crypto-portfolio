@@ -71,7 +71,7 @@ def _call_grok(symbols: list[str]) -> dict[str, dict]:
             "Content-Type": "application/json",
         },
         json=payload,
-        timeout=60,
+        timeout=300,
     )
     resp.raise_for_status()
     data = resp.json()

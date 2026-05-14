@@ -1,6 +1,6 @@
 """
-live-run     : one pump scan cycle (Tier-2 volatile strategy) on real Binance account
-live-loop    : automated loop — pump scan every N min (Tier-2 only)
+live-run     : one trading cycle on real Binance account
+live-loop    : automated loop — main cycle every N min + watchlist sub-cycle every 5 min
 live-status  : show portfolio tracked by this tool + real Binance USDC balance
 live-history : recent live transactions and cycle performance
 """
@@ -456,7 +456,7 @@ def cmd_live_loop(args) -> None:
 
     if not args.yes:
         console.print("\n[bold red]ATTENTION — TRADING REEL sur Binance en boucle automatique[/]")
-        console.print(f"[dim]Scan pump (Tier 2) toutes les {args.interval} min — stratégie volatile uniquement.[/]")
+        console.print(f"[dim]Cycle principal toutes les {args.interval} min + sous-cycle watchlist toutes les 5 min.[/]")
         console.print("[dim]Utilise --dry-run pour simuler sans exécuter.[/]\n")
         if input("Démarrer la boucle live ? [o/N] ").strip().lower() != "o":
             console.print("[dim]Annulé.[/]")

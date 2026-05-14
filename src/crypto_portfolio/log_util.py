@@ -80,151 +80,60 @@ def _candidate_record(ts: str, c: dict, status: str, filter_reason: str | None =
     }
 
 
-def log_pump_candidates(
-    candidates: list[dict],
-    filtered_out: list[dict],
-    ts: str,
-    all_scanned: list[dict] | None = None,
-) -> None:
-    """
-    Log every symbol scanned in a pump cycle.
-
-    - candidates   : passed _has_pump_entry_signal
-    - filtered_out : list of {"symbol": ..., "reason": ...}
-    - all_scanned  : raw candidate dicts before filtering
-    """
-    path = _LOG_DIR / f"{_date(ts)}_candidates.jsonl"
-    scanned_map = {c["symbol"]: c for c in (all_scanned or [])}
-
-    for c in candidates:
-        _write(path, _candidate_record(ts, c, "candidate"))
-
-    for f in filtered_out:
-        sym = f["symbol"]
-        c   = scanned_map.get(sym) or {"symbol": sym}
-        _write(path, _candidate_record(ts, c, "filtered", f.get("reason")))
-
-
-def log_pump_buy(executed: dict, candidate: dict | None, ts: str) -> None:
-    """Log an executed BUY with full feature snapshot from the pump cycle."""
-    path = _LOG_DIR / f"{_date(ts)}_trades.jsonl"
-    c    = candidate or {}
-    _write(path, {
-        "ts":          ts,
-        "type":        "BUY",
-        "cycle":       "pump",
-        "symbol":      executed["symbol"],
-        "price":       executed.get("price"),
-        "quantity":    executed.get("qty"),
-        "usdc":        executed.get("usdc_spent"),
-        "signal":      _signal_name(c),
-        "change_1h":   c.get("change_1h"),
-        "change_3h":   c.get("change_3h"),
-        "change_6h":   c.get("change_6h"),
-        "change_24h":  c.get("change_24h"),
-        "vol_spike_15m": c.get("vol_spike_15m"),
-        "ml_prob_up":  c.get("ml_prob_up"),
-        "ml_ap":       c.get("ml_ap"),
-        "metrics":     c.get("metrics") or None,
-        "context_1h":  c.get("context_1h") or None,
-        "reason":      executed.get("reason"),
-    })
-
-
-def log_pump_sell(executed: dict, position: dict | None, ts: str) -> None:
-    """Log an executed SELL with full feature snapshot at exit time."""
-    path = _LOG_DIR / f"{_date(ts)}_trades.jsonl"
-    pos  = position or {}
-    buy_usdc = (
-        (pos.get("avg_buy_price") or 0) * (executed.get("qty") or 0)
-        if pos.get("avg_buy_price") else None
-    )
-    delta = (
-        (executed.get("proceeds") or 0) - buy_usdc
-        if buy_usdc is not None else None
-    )
-    _write(path, {
-        "ts":            ts,
-        "type":          "SELL",
-        "cycle":         "pump",
-        "symbol":        executed["symbol"],
-        "price":         executed.get("price"),
-        "quantity":      executed.get("qty"),
-        "usdc":          executed.get("proceeds"),
-        "pnl_pct":       executed.get("pnl_pct"),
-        "delta_usdc":    round(delta, 4) if delta is not None else None,
-        "avg_buy_price": pos.get("avg_buy_price"),
-        "hold_hours":    pos.get("held_hours"),
-        "ml_prob_up":    pos.get("ml_prob_up"),
-        "ml_ap":         pos.get("ml_ap"),
-        "metrics":       pos.get("metrics") or None,
-        "reason":        executed.get("reason"),
-    })
-
-
 def log_classic_buy(executed: dict, opportunity: dict | None, ts: str) -> None:
     """Log an executed BUY from the classic (Tier-1) cycle."""
     path = _LOG_DIR / f"{_date(ts)}_trades.jsonl"
     opp  = opportunity or {}
-    ind  = opp.get("indicators") or {}
+    m    = opp.get("metrics") or {}
     _write(path, {
-        "ts":         ts,
-        "type":       "BUY",
-        "cycle":      "classic",
-        "symbol":     executed["symbol"],
-        "price":      executed.get("price"),
-        "quantity":   executed.get("qty"),
-        "usdc":       executed.get("usdc_spent"),
-        "change_24h": opp.get("change_24h"),
-        "vol_usdc":   opp.get("vol_usdc"),
-        "rsi":        ind.get("rsi"),
-        "rsi_trend":  ind.get("rsi_trend"),
-        "macd_dir":   ind.get("macd_dir"),
-        "bb_pct":     ind.get("bb_pct"),
-        "above_ma20": ind.get("above_ma20"),
-        "ml_prob_up": opp.get("ml_prob_up"),
-        "earn_apr":   opp.get("earn_apr"),
-        "reason":     executed.get("reason"),
+        "ts":            ts,
+        "type":          "BUY",
+        "cycle":         "classic",
+        "symbol":        executed["symbol"],
+        "price":         executed.get("price"),
+        "quantity":      executed.get("qty"),
+        "usdc":          executed.get("usdc_spent"),
+        "change_1h":     opp.get("change_1h"),
+        "change_3h":     opp.get("change_3h"),
+        "change_24h":    opp.get("change_24h"),
+        "vol_usdc":      opp.get("vol_usdc"),
+        "vol_spike_15m": opp.get("vol_spike_15m"),
+        "rsi":           m.get("rsi_14"),
+        "rsi_trend":     m.get("rsi_trend_val"),
+        "macd_dir":      m.get("macd_hist_direction"),
+        "bb_position":   m.get("bb_position"),
+        "ma_alignment":  m.get("ma_alignment"),
+        "ml_prob_up":    opp.get("ml_prob_up"),
+        "ml_ap":         opp.get("ml_ap"),
+        "earn_apr":      opp.get("earn_apr"),
+        "metrics":       m or None,
+        "context_1h":    opp.get("context_1h") or None,
+        "reason":        executed.get("reason"),
     })
 
 
-def log_brain_hold(symbol: str, brain_reason: str | None, candidate: dict | None, ts: str, cycle: str = "pump") -> None:
+def log_brain_hold(symbol: str, brain_reason: str | None, candidate: dict | None, ts: str, cycle: str = "classic") -> None:
     """Log a brain HOLD decision with the candidate/opportunity feature snapshot."""
     path = _LOG_DIR / f"{_date(ts)}_candidates.jsonl"
     c = candidate or {}
-    ind = c.get("indicators") or {}
+    m = c.get("metrics") or {}
     record: dict = {
         "ts":           ts,
         "symbol":       symbol,
         "status":       "brain_hold",
         "cycle":        cycle,
         "brain_reason": brain_reason,
+        "change_1h":    c.get("change_1h"),
+        "change_3h":    c.get("change_3h"),
+        "change_24h":   c.get("change_24h"),
+        "vol_spike_15m": c.get("vol_spike_15m"),
+        "ml_prob_up":   c.get("ml_prob_up"),
+        "ml_ap":        c.get("ml_ap"),
+        "metrics":      m or None,
+        "context_1h":   c.get("context_1h") or None,
     }
-    if cycle == "pump" or cycle == "watchlist":
-        record.update({
-            "signal":        _signal_name(c),
-            "change_1h":     c.get("change_1h"),
-            "change_3h":     c.get("change_3h"),
-            "change_6h":     c.get("change_6h"),
-            "change_24h":    c.get("change_24h"),
-            "vol_spike_15m": c.get("vol_spike_15m"),
-            "ml_prob_up":    c.get("ml_prob_up"),
-            "ml_ap":         c.get("ml_ap"),
-            "metrics":       c.get("metrics") or None,
-            "context_1h":    c.get("context_1h") or None,
-        })
-    else:  # classic
-        record.update({
-            "change_24h": c.get("change_24h"),
-            "vol_usdc":   c.get("vol_usdc"),
-            "ml_prob_up": c.get("ml_prob_up"),
-            "earn_apr":   c.get("earn_apr"),
-            "rsi":        ind.get("rsi"),
-            "rsi_trend":  ind.get("rsi_trend"),
-            "macd_dir":   ind.get("macd_dir"),
-            "bb_pct":     ind.get("bb_pct"),
-            "above_ma20": ind.get("above_ma20"),
-        })
+    if cycle == "watchlist":
+        record["signal"] = _signal_name(c)
     _write(path, record)
 
 

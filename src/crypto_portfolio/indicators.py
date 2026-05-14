@@ -92,30 +92,27 @@ def rsi_series(closes: list[float], period: int = 14) -> list[float]:
     return result
 
 
-def golden_cross_recent(closes: list[float], lookback: int = 5) -> bool:
+def _ma_cross_recent(closes: list[float], lookback: int, golden: bool) -> bool:
     if len(closes) < 50 + lookback:
         return False
     for i in range(lookback, 0, -1):
         n = len(closes) - i
-        ma20_now, ma50_now = sma(closes[:n], 20), sma(closes[:n], 50)
+        ma20_now, ma50_now   = sma(closes[:n], 20), sma(closes[:n], 50)
         ma20_prev, ma50_prev = sma(closes[:n - 1], 20), sma(closes[:n - 1], 50)
         if all(v is not None for v in [ma20_now, ma50_now, ma20_prev, ma50_prev]):
-            if ma20_prev <= ma50_prev and ma20_now > ma50_now:
+            if golden and ma20_prev <= ma50_prev and ma20_now > ma50_now:
+                return True
+            if not golden and ma20_prev >= ma50_prev and ma20_now < ma50_now:
                 return True
     return False
+
+
+def golden_cross_recent(closes: list[float], lookback: int = 5) -> bool:
+    return _ma_cross_recent(closes, lookback, golden=True)
 
 
 def death_cross_recent(closes: list[float], lookback: int = 5) -> bool:
-    if len(closes) < 50 + lookback:
-        return False
-    for i in range(lookback, 0, -1):
-        n = len(closes) - i
-        ma20_now, ma50_now = sma(closes[:n], 20), sma(closes[:n], 50)
-        ma20_prev, ma50_prev = sma(closes[:n - 1], 20), sma(closes[:n - 1], 50)
-        if all(v is not None for v in [ma20_now, ma50_now, ma20_prev, ma50_prev]):
-            if ma20_prev >= ma50_prev and ma20_now < ma50_now:
-                return True
-    return False
+    return _ma_cross_recent(closes, lookback, golden=False)
 
 
 def price_cross_ma_recent(closes: list[float], period: int, lookback: int = 3) -> bool:

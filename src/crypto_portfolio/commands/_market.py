@@ -15,9 +15,8 @@ from ..config import (DAILY_STOP_PCT, DAILY_TARGET_PCT, GROK_API_KEY, HARD_TAKE_
                       ML_INTERVAL, QUOTE_CURRENCY, STOP_LOSS_PCT, STOP_LOSS_PCT_TIER2)
 from ..sentiment import fetch_sentiment
 from ..display import console
-from ..indicators import STABLECOINS, atr, bollinger, macd, rsi_series, sma, stochastic  # noqa: F401
-from ..log_util import (log_brain_hold, log_classic_buy, log_classic_sell,
-                        log_pump_buy, log_pump_candidates, log_pump_sell)
+from ..indicators import STABLECOINS
+from ..log_util import log_brain_hold, log_classic_buy, log_classic_sell
 from ..metrics.compute import compute_context, compute_metrics
 from ..ml.predictor import predict_symbol
 from ..storage import (app_get_state, app_set_state, get_excluded, get_funding_df,
@@ -113,56 +112,6 @@ def _refresh_inactive_if_stale() -> None:
 
 
 # ── Indicator helpers ─────────────────────────────────────────────────────────
-
-def _raw_indicators(klines: list) -> dict:
-    closes  = [float(k[4]) for k in klines]
-    volumes = [float(k[5]) for k in klines]
-    highs   = [float(k[2]) for k in klines]
-    lows    = [float(k[3]) for k in klines]
-
-    if len(closes) < 30:
-        return {}
-
-    rsi_vals = rsi_series(closes)
-    rsi_now  = round(rsi_vals[-1], 1)
-    rsi_prev = rsi_vals[-6] if len(rsi_vals) >= 6 else rsi_now
-
-    _, _, histogram = macd(closes)
-    macd_h      = round(histogram[-1], 8) if histogram else 0.0
-    macd_prev_h = histogram[-2] if len(histogram) >= 2 else macd_h
-
-    bb_upper, bb_mid, bb_lower = bollinger(closes)
-    if bb_upper and bb_lower and bb_upper != bb_lower:
-        bb_pct = round((closes[-1] - bb_lower) / (bb_upper - bb_lower), 3)
-        bb_bw  = round((bb_upper - bb_lower) / bb_mid, 4) if bb_mid else None
-    else:
-        bb_pct, bb_bw = None, None
-
-    stoch_k, stoch_d = stochastic(highs, lows, closes)
-    ma20 = sma(closes, 20)
-    ma50 = sma(closes, 50) if len(closes) >= 50 else None
-
-    vol_avg   = sum(volumes[-10:]) / 10 if len(volumes) >= 10 else 0
-    vol_ratio = round(volumes[-1] / vol_avg, 2) if vol_avg > 0 else None
-
-    atr_val = atr(highs, lows, closes)
-    atr_pct = round(atr_val / closes[-1] * 100, 2) if closes[-1] > 0 else None
-
-    return {
-        "rsi":        rsi_now,
-        "rsi_trend":  round(rsi_now - rsi_prev, 1),
-        "macd_hist":  macd_h,
-        "macd_dir":   "up" if macd_h > macd_prev_h else "down",
-        "bb_pct":     bb_pct,
-        "bb_bw":      bb_bw,
-        "stoch_k":    round(stoch_k, 1),
-        "stoch_d":    round(stoch_d, 1),
-        "vol_ratio":  vol_ratio,
-        "above_ma20": bool(ma20 and closes[-1] > ma20),
-        "above_ma50": bool(ma50 and closes[-1] > ma50),
-        "atr_pct":    atr_pct,
-    }
-
 
 def _condensed_candles(klines: list, n: int = 12) -> list:
     recent  = klines[-n:]
@@ -416,14 +365,12 @@ def _build_pump_positions(
                 pass
         pos = {
             "symbol":        h.symbol,
-            "tier":          2 if h.symbol in set(_TIER2_SYMBOLS) else 1,
             "quantity":      round(h.quantity, 8),
             "avg_buy_price": round(h.avg_buy_price, 6),
             "current_price": round(price, 6),
             "value_usdc":    round(h.quantity * price, 2),
             "pnl_pct":       round(pnl_pct, 2),
             "held_hours":    held_h,
-            "indicators":    None,
             "candles_1h":    None,
         }
         try:
@@ -571,179 +518,6 @@ def collect_context(
             "stop_loss_pct":        -STOP_LOSS_PCT,
             "hard_take_profit_pct":  HARD_TAKE_PROFIT_PCT,
             "available_usdc":        round(usdc, 2),
-            "daily_pnl_pct":         daily_pnl,
-            "daily_target_pct":      DAILY_TARGET_PCT,
-            "daily_target_reached":  daily_pnl >= DAILY_TARGET_PCT,
-            "daily_stop_hit":        daily_pnl <= -DAILY_STOP_PCT,
-        },
-    }
-
-
-def collect_pump_context(backend: PortfolioBackend) -> dict:
-    """Build context for the Tier-2 pump detection strategy."""
-    usdc      = backend.get_usdc()
-    holdings  = backend.get_holdings()
-    held_syms = {h.symbol for h in holdings}
-    excluded  = get_excluded()
-
-    _refresh_inactive_if_stale()
-    trading = get_trading_symbols()
-
-    try:
-        all_tickers = get_all_tickers_24h()
-        tickers_map = {
-            t["symbol"].removesuffix(QUOTE_CURRENCY): t
-            for t in all_tickers
-            if t["symbol"].endswith(QUOTE_CURRENCY)
-        }
-    except Exception:
-        tickers_map = {}
-
-    market: dict = {}
-    for sym in ("BTC", "ETH"):
-        if sym in tickers_map:
-            t = tickers_map[sym]
-            market[sym] = {
-                "price":      round(float(t["lastPrice"]), 2),
-                "change_24h": round(float(t["priceChangePercent"]), 2),
-            }
-
-    recent_txs               = backend.get_transactions(20)
-    recent_trades, last_buy_ts = _extract_recent_trades(recent_txs)
-
-    all_syms  = list({h.symbol for h in holdings})
-    prices    = get_prices(all_syms) if holdings else {}
-    positions = _build_pump_positions(holdings, prices, last_buy_ts)
-
-    # Drawdown protection: reduce available capital after consecutive losses
-    raw_pnls    = backend.get_state("recent_pnls")
-    recent_pnls = json.loads(raw_pnls) if raw_pnls else []
-    risk_scale, consecutive_losses = _get_risk_scale(recent_pnls)
-
-    skipped_syms: list[str] = []
-    candidates = []
-    for sym in _TIER2_SYMBOLS:
-        if sym in excluded or sym in held_syms:
-            continue
-        if trading and sym not in trading:
-            skipped_syms.append(f"{sym}(inactive)")
-            continue
-        try:
-            klines = get_recent_klines(sym, "1h", limit=100)
-            if len(klines) < 10:
-                skipped_syms.append(f"{sym}(no_data)")
-                continue
-            closes  = [float(k[4]) for k in klines]
-            volumes = [float(k[5]) for k in klines]
-
-            def _chg(n: int, _c: list = closes) -> float | None:
-                return round((_c[-1] / _c[-n] - 1) * 100, 2) if len(_c) >= n and _c[-n] > 0 else None
-
-            # Intra-hour volume spike: last 15m candle vs avg of prior 3
-            vol_spike_15m = None
-            try:
-                klines_15m = get_recent_klines(sym, "15m", limit=10)
-                vols_15m   = [float(k[5]) for k in klines_15m]
-                if len(vols_15m) >= 4:
-                    recent_avg    = sum(vols_15m[-4:-1]) / 3
-                    vol_spike_15m = round(vols_15m[-1] / recent_avg, 2) if recent_avg > 0 else None
-            except Exception:
-                pass
-
-            m   = compute_metrics(klines)
-            ctx = compute_context(klines)
-
-            candidates.append({
-                "symbol":        sym,
-                "price":         round(closes[-1], 8),
-                "change_1h":     _chg(2),
-                "change_3h":     _chg(4),
-                "change_6h":     _chg(7),
-                "change_24h":    round(float(tickers_map[sym]["priceChangePercent"]), 2) if sym in tickers_map else None,
-                "vol_spike_15m": vol_spike_15m,
-                "context_1h":    ctx,
-                "metrics":       m,
-                "candles_1h":    _condensed_candles(klines, n=8),
-            })
-        except Exception as e:
-            skipped_syms.append(f"{sym}({type(e).__name__})")
-            continue
-
-    if skipped_syms:
-        console.print(f"[dim]Ignorés ({len(skipped_syms)}) : {', '.join(skipped_syms)}[/]")
-
-    all_scanned    = list(candidates)
-    has_signal     = [c for c in all_scanned if _has_pump_entry_signal(c)]
-    filtered_out   = [
-        {"symbol": c["symbol"], "reason": _pump_filter_reason(c)}
-        for c in all_scanned
-        if not _has_pump_entry_signal(c)
-    ]
-    has_signal_sorted = sorted(
-        has_signal,
-        key=lambda c: (c.get("metrics") or {}).get("volume_ratio") or 0,
-        reverse=True,
-    )
-    candidates   = has_signal_sorted[:6]
-    dropped_signals = [
-        {"symbol": c["symbol"], "reason": f"signal_ok_vol={(c.get('metrics') or {}).get('volume_ratio', 0):.2f}_rank>6"}
-        for c in has_signal_sorted[6:]
-    ]
-    filtered_out = filtered_out + dropped_signals
-
-    # Add ML probability + model quality to pre-filtered candidates
-    for c in candidates:
-        try:
-            ml = predict_symbol(c["symbol"], ML_INTERVAL)
-            c["ml_prob_up"] = ml.get("ml_prob")   # None if model AP too low
-            c["ml_ap"]      = ml.get("ap")         # lets brain weight confidence
-        except Exception:
-            c["ml_prob_up"] = None
-            c["ml_ap"]      = None
-
-    if GROK_API_KEY:
-        all_syms = (
-            [c["symbol"] for c in candidates]
-            + [p["symbol"] for p in positions]
-        )
-        sentiment = fetch_sentiment(list(dict.fromkeys(all_syms)))
-        for c in candidates:
-            c["sentiment_x"] = sentiment.get(c["symbol"])
-        for p in positions:
-            p["sentiment_x"] = sentiment.get(p["symbol"])
-
-    total_crypto  = sum(p["value_usdc"] for p in positions)
-    available_cap = round(usdc * risk_scale, 2)
-    total_value   = round(usdc + total_crypto, 2)
-    _loop_ref    = backend.get_state("loop_ref_balance")
-    _stored_init = backend.get_state("initial_balance")
-    if _loop_ref and float(_loop_ref) > 0:
-        initial = float(_loop_ref)
-    elif _stored_init and float(_stored_init) > 0:
-        initial = float(_stored_init)
-    else:
-        initial = total_value
-
-    day_open   = _get_day_balance(backend, total_value)
-    daily_pnl  = round((total_value / day_open - 1) * 100, 2) if day_open > 0 else 0.0
-    return {
-        "_all_scanned":    all_scanned,
-        "strategy":        "pump_detection",
-        "market_context":  market,
-        "virtual_usdc":    round(usdc, 2),
-        "total_value":     total_value,
-        "initial_balance": initial,
-        "pnl_pct":         round((total_value / initial - 1) * 100, 2) if initial > 0 else 0.0,
-        "positions":       positions,
-        "candidates":      candidates,
-        "filtered_out":    filtered_out,
-        "recent_trades":   recent_trades,
-        "constraints": {
-            "stop_loss_pct":        -STOP_LOSS_PCT_TIER2,
-            "hard_take_profit_pct":  HARD_TAKE_PROFIT_PCT,
-            "available_usdc":        available_cap,
-            "risk_scale":            round(risk_scale, 2),
-            "consecutive_losses":    consecutive_losses,
             "daily_pnl_pct":         daily_pnl,
             "daily_target_pct":      DAILY_TARGET_PCT,
             "daily_target_reached":  daily_pnl >= DAILY_TARGET_PCT,
@@ -1279,156 +1053,12 @@ def run_cycle(
         console.print(f"[dim]{n_skip} action(s) ignorée(s) (contraintes, données manquantes ou erreurs).[/]")
 
 
-def run_pump_cycle(
-    backend: PortfolioBackend,
-    verbose: bool = False,
-    dry_run: bool = False,
-) -> None:
-    """Execute one Tier-2 pump detection cycle."""
-    import json
-    from ..ml.brain import get_pump_decisions
-
-    now = _now_iso()
-
-    with console.status("[cyan]Scan Tier-2 — collecte des données…[/]"):
-        context = collect_pump_context(backend)
-
-    # Extract internal data before sending context to the API
-    all_scanned  = context.pop("_all_scanned", [])
-    log_pump_candidates(context["candidates"], context.get("filtered_out", []), now, all_scanned)
-
-    if verbose:
-        console.print("[bold dim]── Contexte pump envoyé à l'API ──[/]")
-        console.print(json.dumps(context, indent=2, ensure_ascii=False))
-        console.print("[bold dim]──────────────────────────────────[/]\n")
-
-    usdc   = context["virtual_usdc"]
-    total  = context["total_value"]
-    pnl    = context["pnl_pct"]
-    pc     = "green" if pnl >= 0 else "red"
-    candidates    = context["candidates"]
-    cand_names    = [c["symbol"] for c in candidates]
-    filtered_out  = context.get("filtered_out", [])
-
-    constraints   = context.get("constraints", {})
-    risk_scale    = constraints.get("risk_scale", 1.0)
-    consec_losses = constraints.get("consecutive_losses", 0)
-    avail         = constraints.get("available_usdc", usdc)
-
-    console.print(
-        f"[bold]Portefeuille :[/] {usdc:.2f} USDC + {total - usdc:.2f} crypto "
-        f"= [bold]{total:.2f} USDC[/] ([{pc}]{pnl:+.1f}%[/]) — disponible {avail:.2f}"
-    )
-    if risk_scale < 1.0:
-        console.print(
-            f"[bold yellow]⚠ Drawdown protection :[/] {consec_losses} pertes consécutives "
-            f"→ capital réduit à {risk_scale:.0%}"
-        )
-    if cand_names:
-        console.print(f"[dim]Tier-2 → API ({len(cand_names)}) : {', '.join(cand_names)}[/]")
-    else:
-        console.print("[dim]Aucun candidat Tier-2 — signal absent[/]")
-    if filtered_out:
-        console.print(f"[dim]Sans signal ({len(filtered_out)}) :[/]")
-        for item in filtered_out:
-            console.print(f"[dim]  {item['symbol']:<14} {item['reason']}[/]")
-    console.print()
-
-    positions_need_review = any(_has_pump_exit_signal(p) for p in context["positions"])
-    if len(cand_names) == 0 and not positions_need_review:
-        console.print("[dim]Aucun signal d'entrée ni de sortie détecté — appel API ignoré.[/]")
-        return
-
-    if dry_run:
-        console.print("[bold yellow]Mode dry-run — aucun ordre réel passé.[/]")
-
-    brain_model = __import__("crypto_portfolio.config", fromlist=["BRAIN_MODEL"]).BRAIN_MODEL
-    with console.status(f"[cyan]Pump scan — {brain_model}…[/]"):
-        decisions = get_pump_decisions(context)
-
-    summary = decisions.get("market_summary", "")
-    actions = decisions.get("actions", [])
-
-    actions, n_contra = _drop_contradictory_actions(actions)
-    if n_contra:
-        console.print(f"[yellow]{n_contra} action(s) contradictoire(s) ignorée(s) (SELL sur achat du même cycle).[/]")
-
-    watch_actions = [a for a in actions if a.get("action") == "WATCH"]
-    actions       = [a for a in actions if a.get("action") != "WATCH"]
-    if watch_actions:
-        _apply_watch_actions(backend, watch_actions)
-        for w in watch_actions:
-            console.print(f"[dim]WATCH {w['symbol']} (brain) : {(w.get('reason') or '')[:100]}[/]")
-
-    if summary:
-        console.print(f"[bold]Analyse :[/] {summary}\n")
-
-    cand_map = {c["symbol"]: c for c in context.get("candidates", [])}
-    pos_map  = {p["symbol"]: p for p in context.get("positions", [])}
-
-    holds = [a for a in actions if a.get("action") == "HOLD"]
-    if holds:
-        for h in holds:
-            console.print(f"[dim]HOLD {h['symbol']} : {(h.get('reason') or '')[:100]}[/]")
-            log_brain_hold(h["symbol"], h.get("reason"), cand_map.get(h["symbol"]), now, "pump")
-
-    # Mechanical exits: hard TP, early stop (-1.5% @90min), stagnant (<0% @2h)
-    actions = _inject_mechanical_exits(actions, context["positions"])
-
-    # Enforce daily stop — block new BUYs if daily loss limit reached
-    constraints = context.get("constraints", {})
-    if constraints.get("daily_stop_hit"):
-        n_blocked = sum(1 for a in actions if a.get("action") == "BUY")
-        actions = [a for a in actions if a.get("action") != "BUY"]
-        if n_blocked:
-            console.print(f"[bold red]Daily stop ({DAILY_STOP_PCT:.0f}%) — {n_blocked} achat(s) bloqué(s)[/]")
-
-    # Block re-entry within 2h of sell
-    actions = _filter_cooldown_buys(actions, backend)
-
-    executed = backend.execute(actions, context, now, dry_run)
-    _record_sell_cooldowns(executed, backend)
-
-    # Log each executed trade with its indicator snapshot
-    for e in executed:
-        sym = e["symbol"]
-        if e["action"] == "BUY":
-            log_pump_buy(e, cand_map.get(sym), now)
-        elif e["action"] == "SELL":
-            log_pump_sell(e, pos_map.get(sym), now)
-
-    _s = backend.get_state("initial_balance")
-    if not _s or float(_s) <= 0:
-        backend.set_state("initial_balance", str(round(context["total_value"], 2)))
-
-    final_hold   = backend.get_holdings()
-    final_prices = get_prices([h.symbol for h in final_hold]) if final_hold else {}
-    final_crypto = sum(h.quantity * final_prices.get(h.symbol, h.avg_buy_price) for h in final_hold)
-    final_total  = backend.get_usdc() + final_crypto
-
-    if not dry_run:
-        backend.add_cycle(now, backend.get_usdc(), final_total, len(executed), summary)
-
-    if executed:
-        _display_action_table(executed, f"[bold magenta]Pump — Actions exécutées ({backend.label})[/]")
-        _print_portfolio_snapshot(final_hold, final_prices, backend.get_usdc(), context["initial_balance"])
-    else:
-        console.print("[dim]Aucune action ce cycle.[/]")
-
-    executed_syms = {e["symbol"] for e in executed}
-    n_skip = sum(1 for a in actions
-                 if a["action"] != "HOLD" and a["symbol"].upper() not in executed_syms)
-    if n_skip:
-        console.print(f"[dim]{n_skip} action(s) ignorée(s) (contraintes, données manquantes ou erreurs).[/]")
-
-
 def run_combined_cycle(
     backend: PortfolioBackend,
     interval_klines: str = "1h",
     ml_interval: str | None = None,
     pool: int = 6,
     verbose: bool = False,
-    force_classic: bool = False,
     dry_run: bool = False,
 ) -> None:
     """Run unified cycle — broad market, composite score selection, compute_metrics enrichment."""

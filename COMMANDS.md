@@ -10,6 +10,9 @@ Syntaxe de base : `crypto-portfolio <commande> [options]`
 |---|---|
 | `setup-keys` | Configurer les clés API Binance dans le Credential Manager |
 | `setup-anthropic` | Configurer la clé API Anthropic dans le Credential Manager |
+| `setup-grok` | Configurer la clé API Grok (xAI) pour le sentiment X/Twitter |
+
+> **Grok (xAI)** — optionnel. Quand configuré, chaque cycle de trading injecte automatiquement le sentiment X en temps réel dans le contexte envoyé à Claude. Voir aussi la commande `sentiment`.
 
 ---
 
@@ -49,17 +52,14 @@ Syntaxe de base : `crypto-portfolio <commande> [options]`
 | Commande | Description |
 |---|---|
 | `live-status` | Afficher le portefeuille live (tracking interne) |
-| `live-run [options]` | Un cycle : Tier-1 (si 24h écoulées) + Tier-2 pump scan |
-| `live-loop [options]` | Boucle automatique : pump toutes les 15 min, classique toutes les 24h |
+| `live-run [options]` | Un cycle de trading sur le compte Binance réel |
+| `live-loop [options]` | Boucle automatique : cycle principal toutes les N min + sous-cycle watchlist toutes les 5 min |
 | `live-history [--limit N] [--cycles N]` | Historique des transactions et cycles live |
-| `live-recap <dd-MM-YYYY>` | Récapitulatif P&L d'une journée (ex: `04-05-2026`) |
+| `live-recap [dd-MM-YYYY]` | Récapitulatif P&L d'une journée (défaut : aujourd'hui) |
+| `live-sync` | Réconcilier le tracking interne avec les balances réelles Binance |
 
 **Options communes `live-run` / `live-loop` :**
-- `--interval MIN` — intervalle pump en minutes (loop, défaut : 15)
-- `--interval-klines 1h` — intervalle klines Tier-1 (défaut : 1h)
-- `--ml-interval` — intervalle des modèles ML (défaut : valeur config)
-- `--pool N` — candidats Tier-1 à analyser (défaut : 10)
-- `--force-classic` — forcer le cycle classique même si < 24h (run seulement)
+- `--interval MIN` — intervalle principal en minutes (loop, défaut : 15)
 - `--dry-run` — simuler les ordres sans les exécuter
 - `--yes / -y` — ignorer la confirmation interactive
 - `--verbose` — afficher le JSON envoyé à l'API
@@ -72,16 +72,13 @@ Syntaxe de base : `crypto-portfolio <commande> [options]`
 |---|---|
 | `sim-reset [--balance USDC]` | Initialiser / réinitialiser le portefeuille virtuel (défaut : 1000 USDC) |
 | `sim-status` | Afficher le portefeuille virtuel |
-| `sim-run [options]` | Un cycle complet (Tier-1 + Tier-2 pump scan) |
+| `sim-run [options]` | Un cycle complet de simulation |
 | `sim-loop [options]` | Boucle automatique simulation |
 | `sim-history [--limit N] [--cycles N]` | Historique transactions et cycles virtuels |
+| `sim-recap [dd-MM-YYYY]` | Récapitulatif P&L simulation d'une journée (défaut : aujourd'hui) |
 
 **Options communes `sim-run` / `sim-loop` :**
-- `--interval MIN` — intervalle pump en minutes (loop, défaut : 15)
-- `--interval-klines 1h` — intervalle klines Tier-1 (défaut : 1h)
-- `--ml-interval` — intervalle des modèles ML
-- `--pool N` — candidats Tier-1 à analyser (défaut : 10)
-- `--force-classic` — forcer le cycle classique même si < 24h (run seulement)
+- `--interval MIN` — intervalle entre chaque scan en minutes (loop, défaut : 15)
 - `--verbose / -v` — afficher le JSON envoyé à l'API
 
 ---
@@ -102,8 +99,12 @@ Syntaxe de base : `crypto-portfolio <commande> [options]`
 | Commande | Description |
 |---|---|
 | `analyze [--interval 1h]` | Analyser les positions pour identifier les sorties |
+| `sentiment [SYM...]` | Afficher le sentiment X/Twitter en temps réel via Grok (défaut : positions du portefeuille) |
+| `scout <SYM>` | Analyse approfondie d'un symbole avec verdict d'achat par Claude AI |
 | `exclude add\|remove\|list [SYM...]` | Gérer la liste des symboles exclus des scans |
 | `fetch <SYM> [--interval 15m] [--since YYYY-MM-DD]` | Télécharger l'historique klines localement |
+
+> **`sentiment`** — nécessite `setup-grok`. Les données sont mises en cache 5 min. Sans argument, affiche les positions du portefeuille ; avec arguments, affiche les symboles spécifiés (ex: `sentiment BTC ETH SOL`).
 
 ---
 
@@ -139,13 +140,13 @@ Les logs sont écrits automatiquement à chaque run dans `log/` :
 
 | Fichier | Contenu |
 |---|---|
-| `log/YYYY-MM-DD_candidates.jsonl` | Un enregistrement par symbole scanné (candidats + filtrés) par cycle pump |
-| `log/YYYY-MM-DD_trades.jsonl` | Un enregistrement par trade exécuté (BUY ou SELL, Tier-1 et Tier-2) |
+| `log/YYYY-MM-DD_candidates.jsonl` | Un enregistrement par symbole scanné (candidats + filtrés) par cycle |
+| `log/YYYY-MM-DD_trades.jsonl` | Un enregistrement par trade exécuté (BUY ou SELL) |
 
 ```python
 # Exemple de lecture pour backtester une règle
 import json
 from pathlib import Path
-rows = [json.loads(l) for l in Path("log/2026-05-04_trades.jsonl").read_text().splitlines()]
-p2_buys = [r for r in rows if r["type"] == "BUY" and r.get("signal") == "p2"]
+rows = [json.loads(l) for l in Path("log/2026-05-14_trades.jsonl").read_text().splitlines()]
+buys = [r for r in rows if r["type"] == "BUY"]
 ```

@@ -14,7 +14,7 @@ from ..metrics.compute import compute_context, compute_metrics
 from ..ml.predictor import predict_symbol
 from ..storage import init_db
 
-from ._market import _condensed_candles, _funding_summary, _raw_indicators
+from ._market import _condensed_candles, _funding_summary
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -38,7 +38,6 @@ def _display_metrics_panel(symbol: str, ctx: dict) -> None:
     from rich.table import Table
 
     m   = ctx.get("metrics") or {}
-    ind = ctx.get("classic_indicators") or {}
     c1h = ctx.get("context_1h") or {}
     mkt = ctx.get("market") or {}
 
@@ -59,27 +58,25 @@ def _display_metrics_panel(symbol: str, ctx: dict) -> None:
     mom_table.add_column(style="dim")
     mom_table.add_column()
 
-    rsi = m.get("rsi_14") or ind.get("rsi")
+    rsi = m.get("rsi_14")
     rsi_color = "red" if rsi and rsi > 70 else "green" if rsi and rsi < 35 else "white"
     mom_table.add_row("RSI",        f"[{rsi_color}]{_fmt_float(rsi, 1)}[/]")
-    mom_table.add_row("RSI trend",  _fmt_float(m.get("rsi_trend_val") or ind.get("rsi_trend"), 1))
+    mom_table.add_row("RSI trend",  _fmt_float(m.get("rsi_trend_val"), 1))
     mom_table.add_row("RSI div",    str(m.get("rsi_divergence") or "—"))
-    mom_table.add_row("MACD dir",   str(m.get("macd_hist_direction") or ind.get("macd_dir") or "—"))
-    mom_table.add_row("Stoch K/D",  f"{_fmt_float(m.get('stoch_k') or ind.get('stoch_k'), 1)} / "
-                                     f"{_fmt_float(m.get('stoch_d') or ind.get('stoch_d'), 1)}")
+    mom_table.add_row("MACD dir",   str(m.get("macd_hist_direction") or "—"))
+    mom_table.add_row("Stoch K/D",  f"{_fmt_float(m.get('stoch_k'), 1)} / {_fmt_float(m.get('stoch_d'), 1)}")
 
     # ── Volume / BB ───────────────────────────────────────────────────────────
     vol_table = Table(box=None, show_header=False, padding=(0, 1))
     vol_table.add_column(style="dim")
     vol_table.add_column()
 
-    vol = m.get("volume_ratio") or ind.get("vol_ratio")
+    vol = m.get("volume_ratio")
     vol_color = "green" if vol and vol > 1.5 else "red" if vol and vol < 0.7 else "white"
     vol_table.add_row("Vol ratio",    f"[{vol_color}]{_fmt_float(vol, 2)}x[/]")
     vol_table.add_row("Vol trend",    str(m.get("volume_trend_5") or "—"))
     vol_table.add_row("Buy/Sell",     _fmt_float(m.get("buy_sell_ratio"), 2))
-    bb_pos = m.get("bb_position") or ind.get("bb_pct")
-    vol_table.add_row("BB position",  _fmt_float(bb_pos, 3))
+    vol_table.add_row("BB position",  _fmt_float(m.get("bb_position"), 3))
     vol_table.add_row("BB squeeze",   str(m.get("bb_squeeze_active") or False))
 
     # ── Trend / structure ─────────────────────────────────────────────────────
@@ -231,12 +228,11 @@ def cmd_scout(args) -> None:
         try:
             metrics    = compute_metrics(klines_1h)
             context_1h = compute_context(klines_1h)
-            indicators = _raw_indicators(klines_1h)
             candles    = _condensed_candles(klines_1h, n=12)
             funding    = _funding_summary(symbol)
         except Exception as e:
             console.print(f"[yellow]Avertissement indicateurs : {e}[/]")
-            metrics = context_1h = indicators = {}
+            metrics = context_1h = {}
             candles = []
             funding = None
 
@@ -281,21 +277,20 @@ def cmd_scout(args) -> None:
             ml = {}
 
         ctx.update({
-            "price":          round(closes[-1], 8),
-            "change_1h":      _chg(2),
-            "change_3h":      _chg(4),
-            "change_6h":      _chg(7),
-            "change_24h":     change_24h,
-            "vol_spike_15m":  vol_spike_15m,
-            "metrics":        metrics,
-            "context_1h":     context_1h,
-            "classic_indicators": indicators,
-            "candles_1h":     candles,
-            "ml_prob_up":     ml.get("ml_prob"),
-            "ml_ap":          ml.get("ap"),
-            "funding":        funding,
-            "earn_apr":       earn_apr,
-            "market":         market,
+            "price":         round(closes[-1], 8),
+            "change_1h":     _chg(2),
+            "change_3h":     _chg(4),
+            "change_6h":     _chg(7),
+            "change_24h":    change_24h,
+            "vol_spike_15m": vol_spike_15m,
+            "metrics":       metrics,
+            "context_1h":    context_1h,
+            "candles_1h":    candles,
+            "ml_prob_up":    ml.get("ml_prob"),
+            "ml_ap":         ml.get("ap"),
+            "funding":       funding,
+            "earn_apr":      earn_apr,
+            "market":        market,
         })
 
     # Display metrics
