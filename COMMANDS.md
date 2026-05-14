@@ -60,6 +60,7 @@ Syntaxe de base : `crypto-portfolio <commande> [options]`
 
 **Options communes `live-run` / `live-loop` :**
 - `--interval MIN` — intervalle principal en minutes (loop, défaut : 15)
+- `--stop-loss PCT` — arrêter la loop si le P&L de session tombe sous `-PCT%` (défaut : 5.0 ; `0` = désactivé)
 - `--dry-run` — simuler les ordres sans les exécuter
 - `--yes / -y` — ignorer la confirmation interactive
 - `--verbose` — afficher le JSON envoyé à l'API
