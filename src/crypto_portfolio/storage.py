@@ -398,6 +398,11 @@ def live_get_holdings() -> list[Holding]:
                         avg_buy_price=r["avg_buy_price"]) for r in rows]
 
 
+def live_clear_holdings() -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM live_holdings")
+
+
 def live_upsert_holding(symbol: str, quantity: float, avg_buy_price: float) -> None:
     with _conn() as conn:
         if quantity <= 1e-8:

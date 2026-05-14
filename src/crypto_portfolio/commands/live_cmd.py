@@ -17,8 +17,9 @@ from ..display import console
 _IGNORED_ASSETS  = frozenset({QUOTE_CURRENCY, "USDT", "BUSD", "FDUSD", "TUSD", "DAI"})
 _MIN_MANUAL_USDC = 1.0  # ignore dust < $1 when detecting manual buys
 from ..storage import (init_db, live_add_cycle, live_add_transaction,
-                       live_get_cycles, live_get_holdings, live_get_state,
-                       live_get_transactions, live_set_state, live_upsert_holding)
+                       live_clear_holdings, live_get_cycles, live_get_holdings,
+                       live_get_state, live_get_transactions, live_set_state,
+                       live_upsert_holding)
 from ._market import (PortfolioBackend, _now_iso,
                       _print_portfolio_snapshot, run_combined_cycle,
                       run_watchlist_cycle)
@@ -208,6 +209,78 @@ def _sync_external_movements(dry_run: bool = False) -> int:
             changes += 1
 
     return changes
+
+
+def _full_reset_from_binance(dry_run: bool = False) -> int:
+    """
+    Wipe live_holdings and rebuild from actual Binance balances (spot + earn).
+    Called at startup of live-run / live-loop to guarantee the tracking matches
+    reality before the first cycle runs.
+
+    avg_buy_price is reconstructed from the last 90 days of trade history.
+    Falls back to current price when no trades are found (old/external position).
+
+    Returns the number of positions imported.
+    """
+    console.print("[cyan]Réinitialisation du tracking depuis Binance…[/]")
+
+    spot_all = get_account_balances()
+    earn_all = get_earn_balances()
+
+    all_actual: dict[str, float] = {}
+    for asset, qty in spot_all.items():
+        all_actual[asset] = all_actual.get(asset, 0.0) + qty
+    for asset, qty in earn_all.items():
+        all_actual[asset] = all_actual.get(asset, 0.0) + qty
+
+    assets_to_price = {
+        a for a, q in all_actual.items()
+        if a not in _IGNORED_ASSETS and not a.startswith("LD") and q > 1e-10
+    }
+    prices = get_prices(list(assets_to_price)) if assets_to_price else {}
+
+    now = _now_iso()
+    ninety_days_ms = int((time.time() - 90 * 86400) * 1000)
+
+    if not dry_run:
+        live_clear_holdings()
+
+    imported = 0
+    for asset, actual_qty in sorted(all_actual.items()):
+        if asset in _IGNORED_ASSETS or asset.startswith("LD"):
+            continue
+
+        price = prices.get(asset, 0.0)
+        value = actual_qty * price
+        if value < _MIN_MANUAL_USDC:
+            continue
+
+        buy_price = price  # fallback: current market price
+        try:
+            raw_trades = get_my_trades(asset, start_ms=ninety_days_ms)
+            buys = [t for t in raw_trades if t["isBuyer"]]
+            if buys:
+                total_qty  = sum(float(t["qty"])      for t in buys)
+                total_usdc = sum(float(t["quoteQty"]) for t in buys)
+                if total_qty > 0:
+                    buy_price = total_usdc / total_qty
+        except Exception:
+            pass
+
+        console.print(
+            f"  [green]↑[/] [bold]{asset}[/] {actual_qty:.6g}"
+            f" @ ~{buy_price:.4g} USDC ≈ {value:.2f} USDC total"
+        )
+        if not dry_run:
+            live_upsert_holding(asset, actual_qty, buy_price)
+            live_add_transaction(now, asset, "BUY", actual_qty, buy_price, "startup_import")
+        imported += 1
+
+    console.print(
+        f"[green]{imported} position(s) importée(s) depuis Binance.[/]"
+        if imported else "[dim]Aucune position trouvée sur Binance.[/]"
+    )
+    return imported
 
 
 # ── Live order execution ──────────────────────────────────────────────────────
@@ -433,6 +506,8 @@ def cmd_live_run(args) -> None:
             console.print("[dim]Annulé.[/]")
             return
 
+    _full_reset_from_binance(dry_run=args.dry_run)
+
     now = _now_iso()
     if not live_get_state("started_at"):
         live_set_state("started_at", now)
@@ -446,7 +521,6 @@ def cmd_live_run(args) -> None:
         if balance > 0:
             live_set_state("initial_balance", str(balance))
 
-    _sync_external_movements(dry_run=args.dry_run)
     run_combined_cycle(_LIVE_BACKEND, dry_run=args.dry_run, verbose=args.verbose)
 
 
@@ -462,6 +536,8 @@ def cmd_live_loop(args) -> None:
             console.print("[dim]Annulé.[/]")
             return
 
+    _full_reset_from_binance(dry_run=args.dry_run)
+
     now = _now_iso()
     if not live_get_state("started_at"):
         live_set_state("started_at", now)
@@ -474,8 +550,6 @@ def cmd_live_loop(args) -> None:
         balance  = round(usdc + crypto, 2)
         if balance > 0:
             live_set_state("initial_balance", str(balance))
-
-    _sync_external_movements(dry_run=args.dry_run)
 
     # Capture reference balance at loop launch for per-session P&L display
     _ref_usdc     = _live_usdc()
