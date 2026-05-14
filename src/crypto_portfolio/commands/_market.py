@@ -29,6 +29,7 @@ _COOLDOWN_HOURS          = 2.0   # min hours between sell and re-buy of same sym
 _EARLY_STOP_HOURS        = 1.5   # exit if held >= 1.5h AND pnl <= -1.5%
 _EARLY_STOP_PCT          = -1.5
 _STAGNANT_HOURS          = 2.0   # exit if held >= 2h AND pnl < 0%
+_MIN_HOLD_BRAIN_SELL_MIN = 30    # brain cannot sell a position held < 30 min (except hard stop-loss)
 
 RESERVE_CANDIDATES: list[str] = ["BTC", "ETH", "SOL", "BNB"]
 
@@ -745,6 +746,30 @@ def _filter_cooldown_buys(actions: list[dict], backend: "PortfolioBackend") -> l
     return result
 
 
+def _filter_premature_brain_sells(
+    actions: list[dict], positions: list[dict]
+) -> tuple[list[dict], int]:
+    """Block brain SELL for positions held < _MIN_HOLD_BRAIN_SELL_MIN, unless hard stop-loss hit."""
+    pos_map = {p["symbol"]: p for p in positions}
+    result, blocked = [], 0
+    for a in actions:
+        if a.get("action") != "SELL":
+            result.append(a)
+            continue
+        sym = a["symbol"]
+        p   = pos_map.get(sym)
+        if p is None:
+            result.append(a)
+            continue
+        held_min = (p.get("held_hours") or 0) * 60
+        pnl      = p.get("pnl_pct") or 0
+        if held_min < _MIN_HOLD_BRAIN_SELL_MIN and pnl > -STOP_LOSS_PCT_TIER2:
+            blocked += 1
+            continue
+        result.append(a)
+    return result, blocked
+
+
 def _record_sell_cooldowns(executed: list[dict], backend: "PortfolioBackend") -> None:
     """Store sell timestamp for each executed SELL to enforce re-entry cooldown."""
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -806,6 +831,10 @@ def run_watchlist_cycle(backend: PortfolioBackend, dry_run: bool = False) -> Non
 
     if n_contra:
         console.print(f"[yellow]{n_contra} action(s) contradictoire(s) ignorée(s).[/]")
+
+    actions, n_premature = _filter_premature_brain_sells(actions, ctx["positions"])
+    if n_premature:
+        console.print(f"[dim]{n_premature} vente(s) prématurée(s) bloquée(s) (< {_MIN_HOLD_BRAIN_SELL_MIN} min).[/]")
 
     watch_actions = [a for a in actions if a.get("action") == "WATCH"]
     actions       = [a for a in actions if a.get("action") != "WATCH"]
