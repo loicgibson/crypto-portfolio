@@ -487,6 +487,8 @@ def collect_context(
             cand["ml_ap"]      = ml.get("ap")
         except Exception:
             pass
+        if ((cand.get("metrics") or {}).get("volume_ratio") or 0) < 0.3:
+            continue
         candidates.append(cand)
 
     _stored_init = backend.get_state("initial_balance")
