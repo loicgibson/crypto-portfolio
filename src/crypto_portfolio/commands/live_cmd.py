@@ -260,10 +260,24 @@ def _full_reset_from_binance(dry_run: bool = False) -> int:
         buy_price = price  # fallback: current market price
         try:
             raw_trades = get_my_trades(asset, start_ms=ninety_days_ms)
-            buys = [t for t in raw_trades if t["isBuyer"]]
+            buys = sorted(
+                [t for t in raw_trades if t["isBuyer"]],
+                key=lambda t: int(t["time"]), reverse=True,
+            )
             if buys:
-                total_qty  = sum(float(t["qty"])      for t in buys)
-                total_usdc = sum(float(t["quoteQty"]) for t in buys)
+                # Walk back through most-recent buys until we cover actual_qty.
+                # Avoids inflating avg_buy_price with old buys from prior positions.
+                remaining  = actual_qty
+                total_qty  = 0.0
+                total_usdc = 0.0
+                for t in buys:
+                    if remaining <= 0:
+                        break
+                    qty  = float(t["qty"])
+                    take = min(qty, remaining)
+                    total_usdc += float(t["quoteQty"]) * (take / qty)
+                    total_qty  += take
+                    remaining  -= take
                 if total_qty > 0:
                     buy_price = total_usdc / total_qty
         except Exception:
