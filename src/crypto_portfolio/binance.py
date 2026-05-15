@@ -9,6 +9,26 @@ import requests
 from .config import BINANCE_API_KEY, BINANCE_API_SECRET, BINANCE_BASE_URL, QUOTE_CURRENCY
 
 
+_time_offset_ms: int = 0  # local clock vs Binance server time, computed once per process
+
+
+def _sync_time() -> None:
+    """Compute offset between local clock and Binance server time."""
+    global _time_offset_ms
+    try:
+        before = int(time.time() * 1000)
+        data   = requests.get(f"{BINANCE_BASE_URL}/api/v3/time", timeout=5).json()
+        after  = int(time.time() * 1000)
+        server = data["serverTime"]
+        _time_offset_ms = server - (before + after) // 2
+    except Exception:
+        _time_offset_ms = 0
+
+
+def _ts() -> int:
+    return int(time.time() * 1000) + _time_offset_ms
+
+
 def _raise(resp: requests.Response) -> None:
     try:
         resp.raise_for_status()
@@ -30,7 +50,7 @@ def _get(endpoint: str, params: dict | None = None) -> dict | list:
 
 def _signed_post(endpoint: str, params: dict | None = None) -> dict:
     p = dict(params or {})
-    p["timestamp"] = int(time.time() * 1000)
+    p["timestamp"] = _ts()
     query = "&".join(f"{k}={v}" for k, v in p.items())
     sig = hmac.new(BINANCE_API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
     p["signature"] = sig
@@ -46,7 +66,7 @@ def _signed_post(endpoint: str, params: dict | None = None) -> dict:
 
 def _signed_get(endpoint: str, params: dict | None = None) -> dict | list:
     p = dict(params or {})
-    p["timestamp"] = int(time.time() * 1000)
+    p["timestamp"] = _ts()
     query = "&".join(f"{k}={v}" for k, v in p.items())
     sig = hmac.new(BINANCE_API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
     p["signature"] = sig

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..binance import (get_account_balances, get_earn_balances, get_lot_size,
                        get_my_trades, get_prices, get_spot_balance, has_api_keys,
-                       place_market_order, redeem_earn)
+                       place_market_order, redeem_earn, _sync_time)
 from ..config import QUOTE_CURRENCY
 from ..display import console
 
@@ -499,6 +499,7 @@ def cmd_live_status(args) -> None:
 def cmd_live_run(args) -> None:
     init_db()
     _check_api_keys()
+    _sync_time()
 
     if not args.yes and not args.dry_run:
         console.print("\n[bold red]ATTENTION — TRADING REEL sur Binance[/]")
@@ -529,6 +530,7 @@ def cmd_live_run(args) -> None:
 def cmd_live_loop(args) -> None:
     init_db()
     _check_api_keys()
+    _sync_time()
 
     if not args.yes:
         console.print("\n[bold red]ATTENTION — TRADING REEL sur Binance en boucle automatique[/]")
