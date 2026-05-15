@@ -3,6 +3,7 @@ import hmac
 import json
 import math
 import time
+from urllib.parse import urlencode
 
 import requests
 
@@ -51,7 +52,7 @@ def _get(endpoint: str, params: dict | None = None) -> dict | list:
 def _signed_post(endpoint: str, params: dict | None = None) -> dict:
     p = dict(params or {})
     p["timestamp"] = _ts()
-    query = "&".join(f"{k}={v}" for k, v in p.items())
+    query = urlencode(p)
     sig = hmac.new(BINANCE_API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
     p["signature"] = sig
     resp = requests.post(
@@ -67,7 +68,7 @@ def _signed_post(endpoint: str, params: dict | None = None) -> dict:
 def _signed_get(endpoint: str, params: dict | None = None) -> dict | list:
     p = dict(params or {})
     p["timestamp"] = _ts()
-    query = "&".join(f"{k}={v}" for k, v in p.items())
+    query = urlencode(p)
     sig = hmac.new(BINANCE_API_SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
     p["signature"] = sig
     resp = requests.get(
